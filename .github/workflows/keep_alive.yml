@@ -1,0 +1,29 @@
+name: Render Keep Alive Smart Pinger
+
+on:
+  schedule:
+    # Har 15 minute mein chalega (Standard UTC time)
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # Isse aap manually bhi test kar sakte hain GitHub par
+
+jobs:
+  ping_job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Time and Ping Render
+        run: |
+          # Indian Standard Time (IST) calculate karne ke liye UTC + 5:30
+          # date command se current hour nikal rahe hain
+          HOUR=$(date -u -d "+5 hours +30 minutes" +"%H")
+          
+          echo "Current IST Hour: $HOUR"
+
+          # Logic: Agar Hour 5 se bada (>=5) aur Raat ke 1 se chota (<1) hai
+          # Matlab Subah 5:00 AM se Raat 12:59 AM tak chalega
+          if [ $HOUR -ge 6 ] || [ $HOUR -lt 1 ]; then
+            echo "🚀 Server jagne ka waqt hai. Pinging..."
+            # APNE RENDER KA URL YAHA DALO
+            curl -I https://dicipline-mobail-app-server.onrender.com/ping
+          else
+            echo "😴 Sone ka waqt hai (1AM - 5AM). No request sent."
+          fi
