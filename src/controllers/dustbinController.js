@@ -1,3 +1,4 @@
+import BinHistory from '../models/BinHistory.js';
 import Dustbin from '../models/Dustbin.js';
 
 export const getMapDustbins = async (req, res) => {
@@ -73,7 +74,6 @@ export const createDustbin = async (req, res) => {
 export const createBulkDustbins = async (req, res) => {
   try {
     const dustbinsList = req.body; // Maan lijiye ye ek array hai
-
     // 1. Validation: Check karein ki ye array hai ya nahi
     if (!Array.isArray(dustbinsList) || dustbinsList.length === 0) {
       return res.status(400).json({ 
@@ -113,49 +113,100 @@ export const createBulkDustbins = async (req, res) => {
 };
 
 
-
 export const updateDustbinLevel = async (req, res) => {
   try {
     const { bin_id, currentLevel } = req.body;
 
-    // 1. Validation: Check karein data sahi hai ya nahi
     if (!bin_id || currentLevel === undefined) {
       return res.status(400).json({ message: "bin_id aur currentLevel zaroori hain." });
     }
 
-    // 2. Database mein update karein
-    const bin = await Dustbin.findByIdAndUpdate(
+    const binProfile = await Dustbin.findById(bin_id);
+    if (!binProfile) return res.status(404).json({ message: "Dustbin nahi mila." });
+
+    // 1. Fetch Latest 30 entries to calculate Moving Average (Adaptive Learning)
+    const historyLogs = await BinHistory.find({ bin_id })
+      .sort({ timestamp: -1 })
+      .limit(30);
+
+    const currentTime = new Date();
+    let adaptiveHourRate = 0; // Avg percentage per hour
+    let hoursToFull = 0;
+
+    if (historyLogs.length > 1) {
+      // 2. Calculate Average Fill Rate from history
+      let totalRate = 0;
+      let count = 0;
+
+      for (let i = 0; i < historyLogs.length - 1; i++) {
+        const curr = historyLogs[i];
+        const prev = historyLogs[i + 1];
+        
+        const timeDiff = (new Date(curr.timestamp) - new Date(prev.timestamp)) / (1000 * 60 * 60);
+        const levelDiff = curr.fill_percent - prev.fill_percent;
+
+        // Hum sirf wahi data lenge jahan level badha hai (Filling phase)
+        if (timeDiff > 0 && levelDiff > 0) {
+          totalRate += (levelDiff / timeDiff);
+          count++;
+        }
+      }
+
+      // 3. Adaptive Rate (Agar data hai toh avg nikalo, nahi toh purana default)
+      adaptiveHourRate = count > 0 ? (totalRate / count) : 1.5; // Default 1.5% per hour if no filling data
+    } else {
+      adaptiveHourRate = 2.0; // Very first entry default
+    }
+
+    // 4. Current Prediction Logic
+    const lastRecord = historyLogs[0];
+    if (lastRecord && currentLevel > lastRecord.fill_percent) {
+      // Current fast-track prediction (Real-time update)
+      const timeDiff = (currentTime - new Date(lastRecord.timestamp)) / (1000 * 60 * 60);
+      const currentRate = (currentLevel - lastRecord.fill_percent) / timeDiff;
+      
+      // We take a weighted average of Current Rate and Historical Adaptive Rate
+      const finalRate = (currentRate * 0.7) + (adaptiveHourRate * 0.3);
+      hoursToFull = (100 - currentLevel) / finalRate;
+    } else {
+      // Agar bin khali hua hai ya level same hai, toh Historical Average use karo
+      hoursToFull = (100 - currentLevel) / adaptiveHourRate;
+    }
+
+    // 5. Weekend & Data Storage
+    const isWeekend = (currentTime.getDay() === 6 || currentTime.getDay() === 0) ? 1 : 0;
+
+    await BinHistory.create({
       bin_id,
-      { 
-        currentLevel: currentLevel,
-        lastSeenAt: Date.now() 
-      },
-      { new: true }
-    );
+      timestamp: currentTime,
+      location_type: binProfile.location_type,
+      fill_percent: currentLevel,
+      is_weekend: isWeekend,
+      hours_to_full: Math.max(0, hoursToFull).toFixed(2)
+    });
 
-    if (!bin) {
-      return res.status(404).json({ message: "Dustbin nahi mila." });
-    }
+    // 6. Update Master Table with new dynamic priority
+    const priority = hoursToFull < 6 ? 10 : (hoursToFull < 15 ? 5 : 1);
+    
+    await Dustbin.findByIdAndUpdate(bin_id, {
+      currentLevel,
+      lastSeenAt: currentTime,
+      priority_score: priority,
+      // Optional: Store adaptive rate in master to show on dashboard
+      Hour_Fill_Level: `${adaptiveHourRate.toFixed(2)} %/hr` 
+    });
 
-    if (currentLevel >= 90) {
-      console.log(`⚠️ ALERT: Dustbin ${bin.name} (${bin.area}) is ${currentLevel}% FULL!`);
-    }
-
-    // 4. Response hardware ko bhejein
     res.status(200).json({
       success: true,
-      message: "Level updated successfully",
-      bin_name: bin.name,
-      currentLevel: bin.currentLevel
+      prediction: hoursToFull.toFixed(2),
+      avg_rate: adaptiveHourRate.toFixed(2)
     });
 
   } catch (error) {
-    console.error("Hardware Update Error:", error.message);
-    res.status(500).json({ message: "Server error during level update" });
+    console.error("Adaptive Update Error:", error);
+    res.status(500).json({ message: "Error in adaptive processing" });
   }
 };
-
-
 
 import User from '../models/user.model.js';
 // Backend Controller Update

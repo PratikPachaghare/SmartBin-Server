@@ -34,33 +34,59 @@ export const getMorningTasks = async (req, res) => {
 };
 
 
-export const getAllWorkers = async (req, res) => {
+export const getAllStaffList = async (req, res) => {
   try {
-    const { search } = req.query;
-    let query = { role: 'worker' };
+    // 1. Database se saare users fetch karte hain (password skip karke)
+    const allUsers = await User.find({}).select('-password').sort({ createdAt: -1 });
 
-    // Search functionality: Name, Email ya Phone se search karein
-    if (search) {
-      query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-        { phone: { $regex: search, $options: 'i' } },
-        { area: { $regex: search, $options: 'i' } }
-      ];
+    if (!allUsers || allUsers.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Database mein koi bhi user nahi mila." 
+      });
     }
 
-    // Frontend table ke liye required fields hi select karein
-    const workers = await User.find(query)
-      .select('name email role area phone isActive avatar createdAt')
-      .sort({ createdAt: -1 });
+    // 2. JavaScript filter use karke Admin aur Worker ko alag alag karte hain
+    // Maan lijiye aapke roles 'admin' aur 'worker' hain
+    const admins = allUsers.filter(user => user.role === 'admin');
+    const workers = allUsers.filter(user => user.role === 'worker');
 
+    // 3. Organised data return karte hain
     res.status(200).json({
       success: true,
-      count: workers.length,
-      workers
+      totalCount: allUsers.length,
+      stats: {
+        adminCount: admins.length,
+        workerCount: workers.length
+      },
+      data: {
+        admins: admins.map(admin => ({
+          id: admin._id,
+          name: admin.name,
+          email: admin.email,
+          role: admin.role,
+          joinedAt: admin.createdAt
+        })),
+        workers: workers.map(worker => ({
+          id: worker._id,
+          name: worker.name,
+          email: worker.email,
+          area: worker.area || "Not Assigned",
+          role: worker.role,
+          rank: worker.rank || "N/A",
+          tasksCompleted: worker.tasksCompletedToday || 0,
+          isOnDuty: worker.isOnDuty || false, // Dashboard filtering ke liye helpful hai
+          joinedAt: worker.createdAt
+        }))
+      }
     });
+
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Staff list fetch karne mein error.', 
+      error: error.message 
+    });
   }
 };
 
@@ -249,5 +275,66 @@ export const getWorkerProfile = async (req, res) => {
       message: 'Worker data fetch karne mein error.', 
       error: error.message 
     });
+  }
+};
+
+
+import BinHistory from '../models/BinHistory.js';
+
+export const getBinAnalytics = async (req, res) => {
+  try {
+    const { binId } = req.params;
+
+    // 1. Search using 'bin_id' to match your MongoDB screenshot
+    const history = await BinHistory.find({ bin_id: binId })
+      .sort({ timestamp: -1 }) // Sort by your 'timestamp' field
+      .limit(20);
+
+    if (!history || history.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          graphData: [],
+          stats: { avgFillingRate: "No Data", lastUpdated: "Never" }
+        }
+      });
+    }
+
+    // 2. Map fields: 'fill_percent' -> 'level' and 'timestamp' -> 'time'
+    const graphData = history.reverse().map(entry => ({
+      level: entry.fill_percent, // Use 'fill_percent' from DB
+      time: new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timestamp: entry.timestamp
+    }));
+
+    // 3. Calculation logic remains the same
+    let avgFillingRate = "Stable";
+    if (graphData.length > 1) {
+      const first = graphData[0];
+      const last = graphData[graphData.length - 1];
+      
+      const levelDiff = last.level - first.level;
+      const timeDiffHours = (new Date(last.timestamp) - new Date(first.timestamp)) / (1000 * 60 * 60);
+      
+      if (levelDiff > 0 && timeDiffHours > 0) {
+        const rate = levelDiff / timeDiffHours;
+        avgFillingRate = `${rate.toFixed(1)}% per hour`;
+      } else if (levelDiff < 0) {
+        avgFillingRate = "Emptying";
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        graphData,
+        stats: {
+          avgFillingRate,
+          lastUpdated: graphData[graphData.length - 1]?.time
+        }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 };

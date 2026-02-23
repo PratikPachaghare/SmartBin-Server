@@ -55,3 +55,49 @@ export const getDashboardStats = async (req, res) => {
     });
   }
 };
+
+
+
+import BinHistory from '../models/BinHistory.js';
+
+export const getHotspotAlerts = async (req, res) => {
+  try {
+    const bins = await Dustbin.find({ isActive: true });
+    const hotspotAlerts = [];
+
+    for (let bin of bins) {
+      // Latest 10 entries check karenge
+      const history = await BinHistory.find({ bin_id: bin._id })
+        .sort({ timestamp: -1 })
+        .limit(10);
+
+      if (history.length < 5) continue;
+
+      const totalHoursToFull = history.reduce((sum, entry) => sum + entry.hours_to_full, 0);
+      const avgHoursToFull = totalHoursToFull / history.length;
+      const frequentFullCount = history.filter(entry => entry.fill_percent >= 90).length;
+
+      // Threshold: Agar avg filling time 8 ghante se kam hai ya 10 mein se 4 baar full hua
+      if (avgHoursToFull < 8 || frequentFullCount >= 4) {
+        hotspotAlerts.push({
+          bin_id: bin._id,
+          name: bin.name,
+          area: bin.area,
+          // Exact coordinates for Admin Map
+          location: {
+            lat: bin.location.lat,
+            lng: bin.location.lng
+          },
+          stats: {
+            avgFillingTime: avgHoursToFull.toFixed(2),
+            timesFullInLast10: frequentFullCount
+          }
+        });
+      }
+    }
+
+    res.status(200).json({ success: true, hotspots: hotspotAlerts });
+  } catch (error) {
+    res.status(500).json({ message: "Error identifying hotspots" });
+  }
+};
