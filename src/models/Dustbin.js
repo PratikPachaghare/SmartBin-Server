@@ -26,7 +26,7 @@ const dustbinSchema = new mongoose.Schema(
 
     isActive: { type: Boolean, default: true },
     lastSeenAt: { type: Date, default: Date.now },
-    
+    Hour_Fill_Level: { type: String, default: '' }, // Hourly fill level data ke liye
     // Past collection ka data
     history: [
       {
