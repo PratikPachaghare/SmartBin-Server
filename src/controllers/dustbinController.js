@@ -231,3 +231,36 @@ export const collectBin = async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 };
+
+
+
+export const getCityBins = async (req, res) => {
+  try {
+    const { area } = req.query; // Area name extracted from query string
+    let query = { isActive: true };
+
+    // Agar frontend se "area" bheja gaya hai, toh query filter karein
+    if (area) {
+      // Use regex for case-insensitive matching
+      query.area = { $regex: new RegExp(`^${area}$`, 'i') };
+    }
+
+    const dustbins = await Dustbin.find(query)
+      .sort({ currentLevel: -1 }) // Show full bins first
+      .limit(500); // Prevent crashing if there are thousands of bins
+
+    res.status(200).json({
+      success: true,
+      count: dustbins.length,
+      data: dustbins
+    });
+
+  } catch (error) {
+    console.error("Error in getCityBins:", error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Bins fetch karne mein error aaya.', 
+      error: error.message 
+    });
+  }
+};
