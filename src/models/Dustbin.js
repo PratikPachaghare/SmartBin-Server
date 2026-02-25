@@ -13,6 +13,7 @@ const dustbinSchema = new mongoose.Schema(
     },
     
     size: { type: String, enum: ['Small', 'Medium', 'Large'], default: 'Medium' },
+    sizeCM: { type: Number, default: 30 },
     
     location: {
       lat: { type: Number, required: true },

@@ -32,29 +32,29 @@ export const getMapDustbins = async (req, res) => {
 
 export const createDustbin = async (req, res) => {
   try {
-    const { name, area, size, lat, lng } = req.body;
-
-    // 1. Basic Validation: Zaroori fields check karein
-    if (!name || !lat || !lng) {
+    // 1. Request se saare fields nikalna
+    const { name, area, location_type, size, sizeCM, lat, lng } = req.body;
+    // 2. Validation: Zaroori fields check karein
+    if (!name || !area || !lat || !lng) {
       return res.status(400).json({ 
-        message: 'Name, Latitude aur Longitude zaroori hain.' 
+        message: 'Name, Area, Latitude aur Longitude zaroori hain.' 
       });
     }
 
-    // 2. Naya Dustbin object banayein
+    // 3. Naya Dustbin object banayein (schema ke mutabiq)
     const newDustbin = new Dustbin({
       name,
       area,
-      size,
+      location_type: location_type || 'Residential', // Default fallback
+      size: size || 'Medium',                       // Default fallback
+      sizeCM: sizeCM ? Number(sizeCM) : 30,         // String ko Number mein convert karein
       location: {
         lat: parseFloat(lat),
         lng: parseFloat(lng)
-      },
-      currentLevel: 0, // Shuruat mein level 0 rahega
-      isActive: true    // By default active
+      }
     });
 
-    // 3. Database mein save karein
+    // 4. Database mein save karein
     const savedDustbin = await newDustbin.save();
 
     res.status(201).json({
@@ -115,26 +115,41 @@ export const createBulkDustbins = async (req, res) => {
 
 export const updateDustbinLevel = async (req, res) => {
   try {
-    const { bin_id, currentLevel } = req.body;
-
+    const { bin_id, currentLevel } = req.body; // currentLevel yahan Arduino se aane wala 'CM' hai
+    console.log("Received update for Bin ID:", bin_id, "with Sensor CM:", currentLevel);
     if (!bin_id || currentLevel === undefined) {
-      return res.status(400).json({ message: "bin_id aur currentLevel zaroori hain." });
+      return res.status(400).json({ message: "bin_id aur currentLevel (CM) zaroori hain." });
     }
 
+    // 1. Dustbin ka data fetch karein taaki humein 'sizeCM' mil sake
     const binProfile = await Dustbin.findById(bin_id);
     if (!binProfile) return res.status(404).json({ message: "Dustbin nahi mila." });
 
-    // 1. Fetch Latest 30 entries to calculate Moving Average (Adaptive Learning)
+    // 2. CM se Percentage calculate karein
+    // Formula: (Total Height - Khali Jagah) / Total Height * 100
+    const totalHeight = binProfile.sizeCM || 30; // Default 30cm agar DB mein na ho
+    let calculatedFillPercent = ((totalHeight - currentLevel) / totalHeight) * 100;
+
+    // Constraints: 0 se niche na jaye aur 100 se upar na jaye
+    calculatedFillPercent = Math.max(0, Math.min(100, calculatedFillPercent));
+    
+    console.log(`Bin ID: ${bin_id} | Sensor CM: ${currentLevel} | Calculated Fill: ${calculatedFillPercent.toFixed(2)}%`);
+    // return res.status(200).json({
+    //   success: true,
+    //   currentLevelPercent: calculatedFillPercent.toFixed(2)
+    // });
+    // --- Aapka Adaptive Logic Yahan Se Shuru Hota Hai ---
+    
+    // 3. Fetch History (Use calculatedFillPercent instead of raw currentLevel)
     const historyLogs = await BinHistory.find({ bin_id })
       .sort({ timestamp: -1 })
       .limit(30);
 
     const currentTime = new Date();
-    let adaptiveHourRate = 0; // Avg percentage per hour
+    let adaptiveHourRate = 0;
     let hoursToFull = 0;
 
     if (historyLogs.length > 1) {
-      // 2. Calculate Average Fill Rate from history
       let totalRate = 0;
       let count = 0;
 
@@ -145,59 +160,53 @@ export const updateDustbinLevel = async (req, res) => {
         const timeDiff = (new Date(curr.timestamp) - new Date(prev.timestamp)) / (1000 * 60 * 60);
         const levelDiff = curr.fill_percent - prev.fill_percent;
 
-        // Hum sirf wahi data lenge jahan level badha hai (Filling phase)
         if (timeDiff > 0 && levelDiff > 0) {
           totalRate += (levelDiff / timeDiff);
           count++;
         }
       }
-
-      // 3. Adaptive Rate (Agar data hai toh avg nikalo, nahi toh purana default)
-      adaptiveHourRate = count > 0 ? (totalRate / count) : 1.5; // Default 1.5% per hour if no filling data
+      adaptiveHourRate = count > 0 ? (totalRate / count) : 1.5;
     } else {
-      adaptiveHourRate = 2.0; // Very first entry default
+      adaptiveHourRate = 2.0; 
     }
 
-    // 4. Current Prediction Logic
+    // 4. Prediction using Calculated Percentage
     const lastRecord = historyLogs[0];
-    if (lastRecord && currentLevel > lastRecord.fill_percent) {
-      // Current fast-track prediction (Real-time update)
+    if (lastRecord && calculatedFillPercent > lastRecord.fill_percent) {
       const timeDiff = (currentTime - new Date(lastRecord.timestamp)) / (1000 * 60 * 60);
-      const currentRate = (currentLevel - lastRecord.fill_percent) / timeDiff;
+      const currentRate = (calculatedFillPercent - lastRecord.fill_percent) / timeDiff;
       
-      // We take a weighted average of Current Rate and Historical Adaptive Rate
       const finalRate = (currentRate * 0.7) + (adaptiveHourRate * 0.3);
-      hoursToFull = (100 - currentLevel) / finalRate;
+      hoursToFull = (100 - calculatedFillPercent) / (finalRate || 0.1);
     } else {
-      // Agar bin khali hua hai ya level same hai, toh Historical Average use karo
-      hoursToFull = (100 - currentLevel) / adaptiveHourRate;
+      hoursToFull = (100 - calculatedFillPercent) / (adaptiveHourRate || 0.1);
     }
 
-    // 5. Weekend & Data Storage
+    // 5. Data Save Karein
     const isWeekend = (currentTime.getDay() === 6 || currentTime.getDay() === 0) ? 1 : 0;
 
     await BinHistory.create({
       bin_id,
       timestamp: currentTime,
       location_type: binProfile.location_type,
-      fill_percent: currentLevel,
+      fill_percent: calculatedFillPercent.toFixed(2), // Save percentage
       is_weekend: isWeekend,
       hours_to_full: Math.max(0, hoursToFull).toFixed(2)
     });
 
-    // 6. Update Master Table with new dynamic priority
+    // 6. Master Table Update
     const priority = hoursToFull < 6 ? 10 : (hoursToFull < 15 ? 5 : 1);
     
     await Dustbin.findByIdAndUpdate(bin_id, {
-      currentLevel,
+      currentLevel: calculatedFillPercent.toFixed(2), // Save percentage here too
       lastSeenAt: currentTime,
       priority_score: priority,
-      // Optional: Store adaptive rate in master to show on dashboard
       Hour_Fill_Level: `${adaptiveHourRate.toFixed(2)} %/hr` 
     });
 
     res.status(200).json({
       success: true,
+      currentLevelPercent: calculatedFillPercent.toFixed(2),
       prediction: hoursToFull.toFixed(2),
       avg_rate: adaptiveHourRate.toFixed(2)
     });
