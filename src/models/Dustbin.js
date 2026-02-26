@@ -21,10 +21,12 @@ const dustbinSchema = new mongoose.Schema(
     },
 
     currentLevel: { type: Number, default: 0 }, // 0 to 100 percentage
+    currentLevel: { type: Number, default: 0 }, // 0 to 100 percentage
+    currentLevel: { type: Number, default: 0 }, // 0 to 100 percentage
     
     // ✅ NEW: Model se aane wali priority yahan store ho sakti hai
     priority_score: { type: Number, default: 0 }, 
-
+    bin_type : { type: String, enum: ['Organic', 'Recyclable', 'Hazardous'], default: 'Organic' },
     isActive: { type: Boolean, default: true },
     lastSeenAt: { type: Date, default: Date.now },
     Hour_Fill_Level: { type: String, default: '' }, // Hourly fill level data ke liye

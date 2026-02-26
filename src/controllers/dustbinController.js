@@ -33,7 +33,8 @@ export const getMapDustbins = async (req, res) => {
 export const createDustbin = async (req, res) => {
   try {
     // 1. Request se saare fields nikalna
-    const { name, area, location_type, size, sizeCM, lat, lng } = req.body;
+    const { name, area, location_type,bin_type, size, sizeCM, lat, lng } = req.body;
+    console.log("Received Dustbin Data:", req.body);
     // 2. Validation: Zaroori fields check karein
     if (!name || !area || !lat || !lng) {
       return res.status(400).json({ 
@@ -46,6 +47,7 @@ export const createDustbin = async (req, res) => {
       name,
       area,
       location_type: location_type || 'Residential', // Default fallback
+      bin_type: bin_type || 'Organic',               // Default fallback
       size: size || 'Medium',                       // Default fallback
       sizeCM: sizeCM ? Number(sizeCM) : 30,         // String ko Number mein convert karein
       location: {
@@ -127,7 +129,8 @@ export const updateDustbinLevel = async (req, res) => {
 
     // 2. CM se Percentage calculate karein
     // Formula: (Total Height - Khali Jagah) / Total Height * 100
-    const totalHeight = binProfile.sizeCM || 30; // Default 30cm agar DB mein na ho
+    const totalHeight = binProfile.sizeCM || 23; // Default 30cm agar DB mein na ho
+    console.log("Total Height:", totalHeight, "Current Level:", currentLevel);
     let calculatedFillPercent = ((totalHeight - currentLevel) / totalHeight) * 100;
 
     // Constraints: 0 se niche na jaye aur 100 se upar na jaye
