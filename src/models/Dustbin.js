@@ -21,8 +21,6 @@ const dustbinSchema = new mongoose.Schema(
     },
 
     currentLevel: { type: Number, default: 0 }, // 0 to 100 percentage
-    currentLevel: { type: Number, default: 0 }, // 0 to 100 percentage
-    currentLevel: { type: Number, default: 0 }, // 0 to 100 percentage
     
     // ✅ NEW: Model se aane wali priority yahan store ho sakti hai
     priority_score: { type: Number, default: 0 }, 

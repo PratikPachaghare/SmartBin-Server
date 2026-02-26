@@ -8,6 +8,7 @@ import userRoutes from './routes/userRoutes.js';
 import dustbinRoutes from './routes/dustbinRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import workerRoutes from './routes/workerRoutes.js';
+import wasteRoutes from './routes/wasteRoutes.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -57,6 +58,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/dustbins', dustbinRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/worker', workerRoutes);
+app.use('/api', wasteRoutes);
 
 app.get('/ping', (req, res) => {
   res.status(200).send("Server is awake!");

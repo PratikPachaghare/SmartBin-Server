@@ -16,10 +16,25 @@ export const getDashboardStats = async (req, res) => {
     const totalWorkers = await User.countDocuments({ role: 'worker' });
     const activeWorkers = await User.countDocuments({ role: 'worker', isActive: true });
 
-    // 4. Area wise distribution (Optional but premium)
-    // Yeh har area mein kitne bins hain uska breakdown dega
+    // 4. Area wise distribution with Dustbin Type breakdown
+    // Yeh har area mein kitne bins hain uska breakdown dega with organic, hazardous, recyclable count
     const areaStats = await Dustbin.aggregate([
-      { $group: { _id: "$area", count: { $sum: 1 }, avgLevel: { $avg: "$currentLevel" } } }
+      {
+        $group: {
+          _id: "$area",
+          count: { $sum: 1 },
+          avgLevel: { $avg: "$currentLevel" },
+          organicCount: {
+            $sum: { $cond: [{ $eq: [{ $ifNull: ["$bin_type", "Organic"] }, "Organic"] }, 1, 0] }
+          },
+          recycleCount: {
+            $sum: { $cond: [{ $eq: [{ $ifNull: ["$bin_type", "Organic"] }, "Recyclable"] }, 1, 0] }
+          },
+          hazardousCount: {
+            $sum: { $cond: [{ $eq: [{ $ifNull: ["$bin_type", "Organic"] }, "Hazardous"] }, 1, 0] }
+          }
+        }
+      }
     ]);
 
     // 5. Overall System Health
