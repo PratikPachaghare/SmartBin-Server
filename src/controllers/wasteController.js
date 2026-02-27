@@ -1,10 +1,36 @@
 import fs from 'fs';
 import path from 'path';
 import WasteReport from '../models/WasteReport.js';
+import PublicUser from '../models/PublicUser.js';
+
+// 👉 IMPORT YOUR CLOUDINARY UTILITY HERE
+// Adjust the path '../utils/cloudinary.js' to exactly where your file is located
+import { uploadOnCloudinery } from '../utils/coudnary.js'; 
+
+export const loginOrRegister = async (req, res) => {
+  // ... (Your existing loginOrRegister code remains exactly the same)
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: 'Username and password are required' });
+
+    let user = await PublicUser.findOne({ username });
+    if (user) {
+      const isMatch = await user.comparePassword(password);
+      if (!isMatch) return res.status(401).json({ error: 'Incorrect password for existing user' });
+      return res.status(200).json({ message: 'Login successful', userId: user._id, username: user.username });
+    } else {
+      user = new PublicUser({ username, password });
+      await user.save();
+      return res.status(201).json({ message: 'Account created and logged in automatically', userId: user._id, username: user.username });
+    }
+  } catch (error) {
+    console.error('Auth Error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
 
 /**
- * Function 1: Store Report Data
- * Assumes the image is already uploaded via Multer middleware.
+ * Function 1: Store Report Data (UPDATED FOR CLOUDINARY)
  */
 export const uploadAndStoreReport = async (req, res) => {
   try {
@@ -20,12 +46,21 @@ export const uploadAndStoreReport = async (req, res) => {
       return res.status(400).json({ error: 'User ID and location data are required' });
     }
 
-    // Since you save to public/temp, the public URL will likely be /temp/filename
-    const imageUrl = `/temp/${req.file.filename}`;
+    // 1. Upload the image to Cloudinary
+    const cloudinaryResponse = await uploadOnCloudinery(req.file.path);
 
+    // 2. Check if upload failed
+    if (!cloudinaryResponse) {
+      return res.status(500).json({ error: 'Failed to upload image to Cloudinary' });
+    }
+
+    // 3. Extract the secure URL from Cloudinary
+    const imageUrl = cloudinaryResponse.secure_url;
+
+    // 4. Save to Database
     const newReport = new WasteReport({
       userId,
-      imageUrl,
+      imageUrl, // This is now the live Cloudinary URL
       location: {
         type: 'Point',
         coordinates: [parseFloat(longitude), parseFloat(latitude)],
@@ -41,11 +76,14 @@ export const uploadAndStoreReport = async (req, res) => {
     res.status(201).json({
       message: 'Report created successfully, pending verification',
       reportId: savedReport._id,
-      imageUrl,
+      imageUrl, // Sending the Cloudinary URL back to the frontend
     });
   } catch (error) {
     console.error('Error saving report:', error);
-    if (req.file) fs.unlinkSync(req.file.path); // Cleanup on error
+    // Cleanup on unexpected server error (if file still exists)
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path); 
+    }
     res.status(500).json({ error: 'Internal Server Error' });
   }
 };
@@ -59,17 +97,13 @@ export const sendForVerification = async (reportId) => {
     const report = await WasteReport.findById(reportId);
     if (!report) return;
 
-    // Construct the absolute path to the saved image
-    const imagePath = path.join(process.cwd(), 'public', report.imageUrl);
-    
-    // In a real scenario, you'd use native fetch() and FormData to send this to a Python/Flask AI service:
+    // NOTE: Because your image is now on Cloudinary, you no longer read it from the local disk.
+    // In a real scenario, you would send the Cloudinary URL to your Python/Flask AI service:
     /*
-    const formData = new FormData();
-    formData.append('image', new Blob([fs.readFileSync(imagePath)]));
-    
     const response = await fetch('YOUR_AI_SERVICE_URL/predict', {
       method: 'POST',
-      body: formData
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageUrl: report.imageUrl }) 
     });
     const result = await response.json();
     */
@@ -97,7 +131,6 @@ export const sendForVerification = async (reportId) => {
 
 /**
  * Function 3: Final Worker Verification
- * Called by the admin/worker dashboard.
  */
 export const verifyReportByWorker = async (req, res) => {
   try {
@@ -126,8 +159,6 @@ export const verifyReportByWorker = async (req, res) => {
 
     await report.save();
 
-    // TODO: If decision === 'valid', add logic here to increment user points
-
     res.status(200).json({ 
       message: 'Verification complete.', 
       finalStatus: report.status 
@@ -140,13 +171,44 @@ export const verifyReportByWorker = async (req, res) => {
 
 export const getPendingReports = async (req, res) => {
   try {
-    // Fetch reports with 'pending' status. 
-    // .sort({ createdAt: 1 }) shows the oldest reports first (first in, first out).
     const pendingReports = await WasteReport.find({ status: 'pending' }).sort({ createdAt: 1 });
-    
     res.status(200).json({ reports: pendingReports });
   } catch (error) {
     console.error('Error fetching pending reports:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+};
+
+
+export const getUserReports = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required' });
+    }
+
+    // Find all reports by this user, newest first
+    const userReports = await WasteReport.find({ userId }).sort({ createdAt: -1 });
+    
+    // Optional: Calculate real points on the backend to send to the frontend
+    const validReports = userReports.filter(report => report.status === 'valid').length;
+    const invalidReports = userReports.filter(report => report.status === 'invalid').length;
+    
+    // Let's say a valid report gives 10 points, and an invalid deducts 10 points
+    const totalPoints = Math.max(0, (validReports * 10) - (invalidReports * 10));
+
+    res.status(200).json({ 
+      reports: userReports,
+      stats: {
+        totalUploads: userReports.length,
+        validReports,
+        invalidReports,
+        totalPoints
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching user reports:', error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 };

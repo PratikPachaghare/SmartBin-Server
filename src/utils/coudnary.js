@@ -2,11 +2,15 @@
 import { v2 as cloudinary } from "cloudinary";
 import fs from "fs";
 
+const CLOUDINERY_CLOUD_NAME = 'dncz7an76';
+const CLOUDINERY_API_KEY = 721857556485297;
+const CLOUDINERY_SECREAT_KEY = '6bmya-iqhA-ZP4nNLEqrVPnrySY';
+
 // Config (Same as yours)
 cloudinary.config({ 
-    cloud_name: process.env.CLOUDINERY_NAME, 
-    api_key: process.env.CLOUDINERY_API_KEY, 
-    api_secret: process.env.CLOUDINERY_API_SECRET
+    cloud_name: CLOUDINERY_CLOUD_NAME, 
+    api_key: CLOUDINERY_API_KEY, 
+    api_secret: CLOUDINERY_SECREAT_KEY
 });
 
 const uploadOnCloudinery = async (localFilePath) => {
@@ -25,6 +29,7 @@ const uploadOnCloudinery = async (localFilePath) => {
         return response;
 
     } catch (error) {
+        console.error("Cloudinary Upload Error:", error);
         // Error case: Safely delete local file
         if (fs.existsSync(localFilePath)) {
              fs.unlinkSync(localFilePath);
